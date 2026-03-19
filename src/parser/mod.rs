@@ -532,20 +532,26 @@ fn operator(input: ParserInput) -> NomResult<String> {
 }
 
 fn operand(input: ParserInput) -> NomResult<Object> {
-    terminated(
-        alt((
-            null,
-            boolean,
-            map(real, Object::Real),
-            map(integer, Object::Integer),
-            map(name, Object::Name),
-            map(literal_string, Object::string_literal),
-            hexadecimal_string,
-            map(array, Object::Array),
-            map(dictionary, Object::Dictionary),
-        )),
-        content_space,
-    ).parse(input)
+    let first = *input.first().ok_or_else(|| {
+        nom::Err::Error(NomError::from_error_kind(input, ErrorKind::Eof))
+    })?;
+    let (rest, obj) = match first {
+        b'0'..=b'9' | b'+' | b'-' | b'.' => {
+            alt((map(real, Object::Real), map(integer, Object::Integer))).parse(input)
+        }
+        b'/' => map(name, Object::Name).parse(input),
+        b'(' => map(literal_string, Object::string_literal).parse(input),
+        b'<' => alt((hexadecimal_string, map(dictionary, Object::Dictionary))).parse(input),
+        b'[' => map(array, Object::Array).parse(input),
+        b't' | b'f' => boolean.parse(input),
+        b'n' => null.parse(input),
+        _ => Err(nom::Err::Error(NomError::from_error_kind(
+            input,
+            ErrorKind::Alt,
+        ))),
+    }?;
+    let (rest, _) = content_space(rest)?;
+    Ok((rest, obj))
 }
 
 fn operation(input: ParserInput) -> NomResult<Operation> {
