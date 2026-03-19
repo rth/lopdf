@@ -413,7 +413,14 @@ pub fn header(input: ParserInput) -> Option<String> {
     strip_nom(map_res(
         delimited(
             tag(&b"%PDF-"[..]),
-            take_while(|c: u8| !b"\r\n".contains(&c)),
+            // Only capture version characters (e.g. "1.7").  Some PDF
+            // generators (e.g. ImageMill) place binary marker bytes on the
+            // same line without a separating newline.  Capturing the whole
+            // line would include those bytes and fail UTF-8 validation.
+            terminated(
+                take_while(|c: u8| c.is_ascii_digit() || c == b'.'),
+                take_while(|c: u8| !b"\r\n".contains(&c)),
+            ),
             pair(eol, many0_count(comment)),
         ),
         |v: ParserInput| str::from_utf8(&v).map(Into::into),
@@ -800,6 +807,41 @@ startxref
             Some(num) => assert_eq!(num, 153804),
             None => panic!("could not parse number in startxref"),
         }
+    }
+
+    #[test]
+    fn header_standard() {
+        // Standard header with proper EOL
+        let input = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n";
+        assert_eq!(header(test_span(input)), Some("1.7".to_string()));
+    }
+
+    #[test]
+    fn header_with_binary_bytes_on_same_line() {
+        // Some generators (e.g. ImageMill) place binary marker bytes on the
+        // header line without a separating newline or '%' prefix.
+        let input = b"%PDF-1.3 \xb0\x9f\x92\x9c\x9f\xd4\xe0\xce\xd0\xd0\xd0\r1 0 obj\r";
+        assert_eq!(header(test_span(input)), Some("1.3".to_string()));
+    }
+
+    #[test]
+    fn header_cr_line_ending() {
+        // CR-only line ending (common in older PDFs)
+        let input = b"%PDF-1.3\r%\xe2\xe3\xcf\xd3\r";
+        assert_eq!(header(test_span(input)), Some("1.3".to_string()));
+    }
+
+    #[test]
+    fn header_crlf_line_ending() {
+        // CRLF line ending (common on Windows-generated PDFs)
+        let input = b"%PDF-1.7\r\n%\xe2\xe3\xcf\xd3\r\n";
+        assert_eq!(header(test_span(input)), Some("1.7".to_string()));
+    }
+
+    #[test]
+    fn header_pdf_2_0() {
+        let input = b"%PDF-2.0\n%\xe2\xe3\xcf\xd3\n";
+        assert_eq!(header(test_span(input)), Some("2.0".to_string()));
     }
 
     #[test]
